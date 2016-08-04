@@ -33,7 +33,7 @@
     <f:textbox default="" />
   </f:entry>
   <f:entry name="fileType" title="File type" field="fileType">
-    <select name="fileType" default="Zip">
+    <select name="fileType">
         <option value="Zip">zip</option>
         <option value="Tar">tar</option>
         <option value="Tgz">tar.gz</option>
