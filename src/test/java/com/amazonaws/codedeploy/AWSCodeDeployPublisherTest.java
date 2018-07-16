@@ -29,6 +29,7 @@ public class AWSCodeDeployPublisherTest {
                 10L,
                 "awsAccessKey",
                 "",
+                "compressToS3",
                 "deploy",
                 "testAccessKey",
                 "testSecretKey",

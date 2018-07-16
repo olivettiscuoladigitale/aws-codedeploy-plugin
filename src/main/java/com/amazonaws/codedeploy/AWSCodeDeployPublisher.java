@@ -62,6 +62,7 @@ import java.io.FileOutputStream;
 import java.io.InputStreamReader;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.Map;
 import java.util.UUID;
@@ -72,28 +73,28 @@ import javax.servlet.ServletException;
 /**
  * The AWS CodeDeploy Publisher is a post-build plugin that adds the ability to start a new CodeDeploy deployment
  * with the project's workspace as the application revision.
- *
+ * <p>
  * To configure, users must create an IAM role that allows "S3" and "CodeDeploy" actions and must be assumable by
  * the globally configured keys. This allows the plugin to get temporary credentials instead of requiring permanent
  * credentials to be configured for each project.
  */
 public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep {
-    public static final long      DEFAULT_TIMEOUT_SECONDS           = 900;
-    public static final long      DEFAULT_POLLING_FREQUENCY_SECONDS = 15;
-    public static final String    ROLE_SESSION_NAME                 = "jenkins-codedeploy-plugin";
-    private static final Regions[] AVAILABLE_REGIONS                 = {Regions.AP_NORTHEAST_1, Regions.AP_SOUTHEAST_1, Regions.AP_SOUTHEAST_2, Regions.EU_WEST_1, Regions.US_EAST_1, Regions.US_WEST_2, Regions.EU_CENTRAL_1, Regions.US_WEST_1, Regions.SA_EAST_1, Regions.AP_NORTHEAST_2, Regions.AP_SOUTH_1, Regions.US_EAST_2, Regions.CA_CENTRAL_1, Regions.EU_WEST_2, Regions.CN_NORTH_1};
+    public static final long DEFAULT_TIMEOUT_SECONDS = 900;
+    public static final long DEFAULT_POLLING_FREQUENCY_SECONDS = 15;
+    public static final String ROLE_SESSION_NAME = "jenkins-codedeploy-plugin";
+    private static final Regions[] AVAILABLE_REGIONS = {Regions.AP_NORTHEAST_1, Regions.AP_SOUTHEAST_1, Regions.AP_SOUTHEAST_2, Regions.EU_WEST_1, Regions.US_EAST_1, Regions.US_WEST_2, Regions.EU_CENTRAL_1, Regions.US_WEST_1, Regions.SA_EAST_1, Regions.AP_NORTHEAST_2, Regions.AP_SOUTH_1, Regions.US_EAST_2, Regions.CA_CENTRAL_1, Regions.EU_WEST_2, Regions.CN_NORTH_1};
 
-    private final String  s3bucket;
-    private final String  s3prefix;
-    private final String  applicationName;
-    private final String  deploymentGroupName; // TODO allow for deployment to multiple groups
-    private final String  deploymentConfig;
-    private final Long    pollingTimeoutSec;
-    private final Long    pollingFreqSec;
+    private final String s3bucket;
+    private final String s3prefix;
+    private final String applicationName;
+    private final String deploymentGroupName; // TODO allow for deployment to multiple groups
+    private final String deploymentConfig;
+    private final Long pollingTimeoutSec;
+    private final Long pollingFreqSec;
     private final boolean deploymentGroupAppspec;
     private final boolean waitForCompletion;
-    private final String  externalId;
-    private final String  iamRoleArn;
+    private final String externalId;
+    private final String iamRoleArn;
     private final String region;
     private final String includes;
     private final String excludes;
@@ -105,6 +106,7 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
     private final Secret awsSecretKey;
     private final String credentials;
     private final String deploymentMethod;
+    private final String packArtifacts;
     private final String versionFileName;
 
     @Deprecated
@@ -127,6 +129,7 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
             Long pollingFreqSec,
             String credentials,
             String versionFileName,
+            String packArtifacts,
             String deploymentMethod,
             String awsAccessKey,
             String awsSecretKey,
@@ -153,6 +156,7 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
         this.proxyPort = proxyPort;
         this.credentials = credentials;
         this.deploymentMethod = deploymentMethod;
+        this.packArtifacts = packArtifacts;
         this.versionFileName = versionFileName;
         this.awsAccessKey = awsAccessKey;
         this.awsSecretKey = Secret.fromString(awsSecretKey);
@@ -186,7 +190,7 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
     }
 
     @Override
-    public void perform(@Nonnull Run<?,?> build, @Nonnull FilePath workspace, @Nonnull Launcher launcher, @Nonnull TaskListener listener) throws IOException, InterruptedException {
+    public void perform(@Nonnull Run<?, ?> build, @Nonnull FilePath workspace, @Nonnull Launcher launcher, @Nonnull TaskListener listener) throws IOException, InterruptedException {
         final PrintStream logger = listener.getLogger();
         final Map<String, String> envVars = build.getEnvironment(listener);
         final boolean buildFailed = build.getResult() == Result.FAILURE;
@@ -212,11 +216,11 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
             }
         } else {
             aws = AWSClients.fromIAMRole(
-                this.region,
-                this.iamRoleArn,
-                this.getDescriptor().getExternalId(),
-                this.proxyHost,
-                this.proxyPort);
+                    this.region,
+                    this.iamRoleArn,
+                    this.getDescriptor().getExternalId(),
+                    this.proxyHost,
+                    this.proxyPort);
         }
 
         boolean success = false;
@@ -230,16 +234,37 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
                 throw new IllegalArgumentException("No workspace present for the build.");
             }
             final FilePath sourceDirectory = getSourceDirectory(workspace, envVars);
-            final RevisionLocation revisionLocation = zipAndUpload(aws, projectName, sourceDirectory, logger, envVars);
+            final RevisionLocation revisionLocation;
+            if ("s3Direct".equals(packArtifacts)) {
+                revisionLocation = new RevisionLocation();
+                try {
+                    S3Location s3Location = new S3Location();
+                    s3Location.setBucket(getS3bucket());
+                    s3Location.setKey(getS3prefix());
+                    s3Location.setBundleType(BundleType.Tgz);
+                    // s3Location.setETag(s3result.getETag());
+
+                    revisionLocation.setRevisionType(RevisionLocationType.S3);
+                    revisionLocation.setS3Location(s3Location);
+                } catch (Exception e) {
+                    logger.println("Failed to build s3 location from s3 directly 's3://" + getS3bucket() + "/" + getS3prefix() +
+                            "'; exception follows.");
+                    logger.println(e.getMessage());
+                    e.printStackTrace(logger);
+                }
+            } else {
+                revisionLocation = zipAndUpload(aws, projectName, sourceDirectory, logger, envVars);
+            }
+
 
             registerRevision(aws, revisionLocation, logger, envVars);
-            if ("onlyRevision".equals(deploymentMethod)){
-              success = true;
+            if ("onlyRevision".equals(deploymentMethod)) {
+                success = true;
             } else {
 
-              String deploymentId = createDeployment(aws, revisionLocation, logger, envVars);
+                String deploymentId = createDeployment(aws, revisionLocation, logger, envVars);
 
-              success = waitForDeployment(aws, deploymentId, logger);
+                success = waitForDeployment(aws, deploymentId, logger);
             }
 
         } catch (Exception e) {
@@ -262,14 +287,14 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
         FilePath sourcePath = basePath.withSuffix(subdirectory).absolutize();
         if (!sourcePath.isDirectory() || !isSubDirectory(basePath, sourcePath)) {
             throw new IllegalArgumentException("Provided path (resolved as '" + sourcePath
-                    +"') is not a subdirectory of the workspace (resolved as '" + basePath + "')");
+                    + "') is not a subdirectory of the workspace (resolved as '" + basePath + "')");
         }
         return sourcePath;
     }
 
     private boolean isSubDirectory(FilePath parent, FilePath child) {
         FilePath parentFolder = child;
-        while (parentFolder!=null) {
+        while (parentFolder != null) {
             if (parent.equals(parentFolder)) {
                 return true;
             }
@@ -283,6 +308,9 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
         ListApplicationsResult applications = aws.codedeploy.listApplications();
         String applicationName = getApplicationNameFromEnv(envVars);
         String deploymentGroupName = getDeploymentGroupNameFromEnv(envVars);
+
+
+        System.out.println("Applications found: " + Arrays.toString(applications.getApplications().toArray()));
 
         if (!applications.getApplications().contains(applicationName)) {
             throw new IllegalArgumentException("Cannot find application named '" + applicationName + "'");
@@ -308,25 +336,27 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
         InputStreamReader reader = null;
         String version = null;
         try {
-          reader = new InputStreamReader(new FileInputStream(versionFile), "UTF-8");
-          char[] chars = new char[(int) versionFile.length() -1];
-          reader.read(chars);
-          version = new String(chars);
-          reader.close();
+            reader = new InputStreamReader(new FileInputStream(versionFile), "UTF-8");
+            char[] chars = new char[(int) versionFile.length() - 1];
+            reader.read(chars);
+            version = new String(chars);
+            reader.close();
         } catch (IOException e) {
-          e.printStackTrace();
+            e.printStackTrace();
         } finally {
-          if(reader !=null){reader.close();}
+            if (reader != null) {
+                reader.close();
+            }
         }
 
-        if (version != null){
-          zipFile = new File("/tmp/" + projectName + "-" + version + ".zip");
-          final boolean fileCreated = zipFile.createNewFile();
-          if (!fileCreated) {
-            logger.println("File already exists, overwriting: " + zipFile.getPath());
-          }
+        if (version != null) {
+            zipFile = new File("/tmp/" + projectName + "-" + version + ".zip");
+            final boolean fileCreated = zipFile.createNewFile();
+            if (!fileCreated) {
+                logger.println("File already exists, overwriting: " + zipFile.getPath());
+            }
         } else {
-          zipFile = File.createTempFile(projectName + "-", ".zip");
+            zipFile = File.createTempFile(projectName + "-", ".zip");
         }
 
         String key;
@@ -336,7 +366,7 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
         String prefix = getS3PrefixFromEnv(envVars);
         String bucket = getS3BucketFromEnv(envVars);
 
-        if(bucket.indexOf("/") > 0){
+        if (bucket.indexOf("/") > 0) {
             throw new IllegalArgumentException("S3 Bucket field cannot contain any subdirectories.  Bucket name only!");
         }
 
@@ -349,7 +379,7 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
                     logger.println("Use appspec." + deploymentGroupName + ".yml");
                 }
                 if (!appspec.exists()) {
-                    throw new IllegalArgumentException("/appspec." + deploymentGroupName + ".yml file does not exist" );
+                    throw new IllegalArgumentException("/appspec." + deploymentGroupName + ".yml file does not exist");
                 }
 
             }
@@ -495,10 +525,9 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
     }
 
     /**
-     *
      * Descriptor for {@link AWSCodeDeployPublisher}. Used as a singleton.
      * The class is marked as public so that it can be accessed from views.
-     *
+     * <p>
      * See <tt>src/main/resources/com/amazonaws/codedeploy/AWSCodeDeployPublisher/*.jelly</tt>
      * for the actual HTML fragment for the configuration screen.
      */
@@ -619,23 +648,19 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
             return items;
         }
 
-        public String getAwsSecretKey()
-        {
+        public String getAwsSecretKey() {
             return Secret.toString(awsSecretKey);
         }
 
-        public void setAwsSecretKey(String awsSecretKey)
-        {
+        public void setAwsSecretKey(String awsSecretKey) {
             this.awsSecretKey = Secret.fromString(awsSecretKey);
         }
 
-        public String getAwsAccessKey()
-        {
+        public String getAwsAccessKey() {
             return awsAccessKey;
         }
 
-        public void setAwsAccessKey(String awsAccessKey)
-        {
+        public void setAwsAccessKey(String awsAccessKey) {
             this.awsAccessKey = awsAccessKey;
         }
 
@@ -687,6 +712,10 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
 
     public String getDeploymentMethod() {
         return deploymentMethod;
+    }
+
+    public String getPackArtifacts() {
+        return packArtifacts;
     }
 
     public String getVersionFileName() {
