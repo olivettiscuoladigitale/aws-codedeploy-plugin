@@ -193,6 +193,13 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
     public void perform(@Nonnull Run<?, ?> build, @Nonnull FilePath workspace, @Nonnull Launcher launcher, @Nonnull TaskListener listener) throws IOException, InterruptedException {
         final PrintStream logger = listener.getLogger();
         final Map<String, String> envVars = build.getEnvironment(listener);
+
+        //	Print envVars
+        System.out.println("Print envVars (System.out)");
+        envVars.forEach((key, value) -> System.out.println(key + ":" + value));
+        logger.println("Print envVars (logger)");
+        envVars.forEach((key, value) -> logger.println(key + ":" + value));
+
         final boolean buildFailed = build.getResult() == Result.FAILURE;
         if (buildFailed) {
             logger.println("Skipping CodeDeploy publisher as build failed");
