@@ -242,19 +242,24 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
             }
             final FilePath sourceDirectory = getSourceDirectory(workspace, envVars);
             final RevisionLocation revisionLocation;
+            boolean s3BuildFileExist = false;
             if ("s3Direct".equals(packArtifacts)) {
                 revisionLocation = new RevisionLocation();
                 try {
+                    s3BuildFileExist = aws.s3.doesObjectExist(getS3bucket(), getS3PrefixFromEnv(envVars));
+                    if (!s3BuildFileExist) {
+                        throw new Exception("Path on s3 does not exists! 's3://" + getS3bucket() + "/" + getS3PrefixFromEnv(envVars) + "'");
+                    }
                     S3Location s3Location = new S3Location();
                     s3Location.setBucket(getS3bucket());
-                    s3Location.setKey(getS3prefix());
+                    s3Location.setKey(getS3PrefixFromEnv(envVars));
                     s3Location.setBundleType(BundleType.Tgz);
                     // s3Location.setETag(s3result.getETag());
 
                     revisionLocation.setRevisionType(RevisionLocationType.S3);
                     revisionLocation.setS3Location(s3Location);
                 } catch (Exception e) {
-                    logger.println("Failed to build s3 location from s3 directly 's3://" + getS3bucket() + "/" + getS3prefix() +
+                    logger.println("Failed to build s3 location from s3 directly 's3://" + getS3bucket() + "/" + getS3PrefixFromEnv(envVars) +
                             "'; exception follows.");
                     logger.println(e.getMessage());
                     e.printStackTrace(logger);
@@ -339,6 +344,7 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
         File zipFile = null;
         File versionFile;
         versionFile = new File(sourceDirectory + "/" + versionFileName);
+        logger.println("VersionFile path " + versionFile.getAbsolutePath());
 
         InputStreamReader reader = null;
         String version = null;
@@ -347,8 +353,10 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
             char[] chars = new char[(int) versionFile.length() - 1];
             reader.read(chars);
             version = new String(chars);
+            logger.println("VersionFile contains: " + version);
             reader.close();
         } catch (IOException e) {
+            logger.println("Exception reading VersionFile: " + e.getMessage());
             e.printStackTrace();
         } finally {
             if (reader != null) {
