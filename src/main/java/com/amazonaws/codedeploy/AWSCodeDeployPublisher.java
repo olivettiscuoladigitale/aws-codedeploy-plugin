@@ -33,6 +33,7 @@ import com.amazonaws.services.codedeploy.model.S3Location;
 
 import hudson.AbortException;
 import hudson.FilePath;
+import hudson.FilePath.TarCompression;
 import hudson.Launcher;
 import hudson.Util;
 import hudson.Extension;
@@ -101,6 +102,7 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
     private final String subdirectory;
     private final String proxyHost;
     private final int proxyPort;
+    private final String fileType;
 
     private final String awsAccessKey;
     private final Secret awsSecretKey;
@@ -139,7 +141,9 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
             String proxyHost,
             int proxyPort,
             String excludes,
-            String subdirectory) {
+            String subdirectory,
+            String fileType) {
+
         this.externalId = externalId;
         this.applicationName = applicationName;
         this.deploymentGroupName = deploymentGroupName;
@@ -154,6 +158,7 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
         this.subdirectory = subdirectory;
         this.proxyHost = proxyHost;
         this.proxyPort = proxyPort;
+        this.fileType = fileType;
         this.credentials = credentials;
         this.deploymentMethod = deploymentMethod;
         this.packArtifacts = packArtifacts;
@@ -240,6 +245,7 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
             if (workspace == null) {
                 throw new IllegalArgumentException("No workspace present for the build.");
             }
+
             final FilePath sourceDirectory = getSourceDirectory(workspace, envVars);
             final RevisionLocation revisionLocation;
             boolean s3BuildFileExist = false;
@@ -265,8 +271,10 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
                     e.printStackTrace(logger);
                 }
             } else {
-                revisionLocation = zipAndUpload(aws, projectName, sourceDirectory, logger, envVars);
+                RevisionLocation revisionLocation = compressAndUpload(aws, projectName, getSourceDirectory(build.getWorkspace()), this.fileType);
             }
+            
+
 
 
             registerRevision(aws, revisionLocation, logger, envVars);
@@ -339,41 +347,25 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
         }
     }
 
-    private RevisionLocation zipAndUpload(AWSClients aws, String projectName, FilePath sourceDirectory, PrintStream logger, Map<String, String> envVars) throws IOException, InterruptedException, IllegalArgumentException {
+private RevisionLocation compressAndUpload(AWSClients aws, String projectName, FilePath sourceDirectory, String fileType) throws IOException, InterruptedException, IllegalArgumentException {
 
-        File zipFile = null;
-        File versionFile;
-        versionFile = new File(sourceDirectory + "/" + versionFileName);
-        logger.println("VersionFile path " + versionFile.getAbsolutePath());
-
-        InputStreamReader reader = null;
-        String version = null;
-        try {
-            reader = new InputStreamReader(new FileInputStream(versionFile), "UTF-8");
-            char[] chars = new char[(int) versionFile.length() - 1];
-            reader.read(chars);
-            version = new String(chars);
-            logger.println("VersionFile contains: " + version);
-            reader.close();
-        } catch (IOException e) {
-            logger.println("Exception reading VersionFile: " + e.getMessage());
-            e.printStackTrace();
-        } finally {
-            if (reader != null) {
-                reader.close();
-            }
-        }
-
-        if (version != null) {
-            zipFile = new File("/tmp/" + projectName + "-" + version + ".zip");
-            final boolean fileCreated = zipFile.createNewFile();
-            if (!fileCreated) {
-                logger.println("File already exists, overwriting: " + zipFile.getPath());
-            }
+		String extension;
+		BundleType bundleType;
+		if (fileType == null || fileType.equals("Tar")) {
+        	extension = ".zip";
+            bundleType = BundleType.Zip;
+        } else if (fileType.equals("Tar")) {
+            extension = ".tar";
+            bundleType = BundleType.Tar;
+        } else if (fileType.equals("Tgz")) {
+            extension = ".tar.gz";
+            bundleType = BundleType.Tgz;
         } else {
-            zipFile = File.createTempFile(projectName + "-", ".zip");
+        	extension = ".zip";
+            bundleType = BundleType.Zip;
         }
 
+        File tarzipFile = File.createTempFile(projectName + "-", extension);
         String key;
         File appspec;
         File dest;
@@ -399,35 +391,48 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
 
             }
 
-            logger.println("Zipping files into " + zipFile.getAbsolutePath());
 
-            FileOutputStream outputStream = new FileOutputStream(zipFile);
-            try {
-                sourceDirectory.zip(
-                        outputStream,
-                        new DirScanner.Glob(this.includes, this.excludes)
-                );
-            } finally {
-                outputStream.close();
-            }
+            logger.println("package files into " + tarzipFile.getAbsolutePath());
+
+			if (fileType == null || fileType.equals("Zip")) {
+	        	sourceDirectory.zip(
+	                    new FileOutputStream(tarzipFile),
+	                    new DirScanner.Glob(this.includes, this.excludes)
+		        );
+	        } else if (fileType.equals("Tar")) {
+	            sourceDirectory.tar(
+                    new FileOutputStream(tarzipFile),
+                    new DirScanner.Glob(this.includes, this.excludes)
+            	);
+	        } else if (fileType.equals("Tgz")) {
+	            sourceDirectory.tar(
+                    TarCompression.GZIP.compress(new FileOutputStream(tarzipFile)),
+                    new DirScanner.Glob(this.includes, this.excludes)
+            	);
+	        } else {
+	        	sourceDirectory.zip(
+	                    new FileOutputStream(tarzipFile),
+	                    new DirScanner.Glob(this.includes, this.excludes)
+		        );
+	        }
 
             if (prefix.isEmpty()) {
-                key = zipFile.getName();
+                key = tarzipFile.getName();
             } else {
                 key = Util.replaceMacro(prefix, envVars);
                 if (prefix.endsWith("/")) {
-                    key += zipFile.getName();
+                    key += tarzipFile.getName();
                 } else {
-                    key += "/" + zipFile.getName();
+                    key += "/" + tarzipFile.getName();
                 }
             }
             logger.println("Uploading zip to s3://" + bucket + "/" + key);
-            PutObjectResult s3result = aws.s3.putObject(bucket, key, zipFile);
+            PutObjectResult s3result = aws.s3.putObject(bucket, key, tarzipFile);
 
             S3Location s3Location = new S3Location();
             s3Location.setBucket(bucket);
             s3Location.setKey(key);
-            s3Location.setBundleType(BundleType.Zip);
+            s3Location.setBundleType(bundleType);
             s3Location.setETag(s3result.getETag());
 
             RevisionLocation revisionLocation = new RevisionLocation();
@@ -436,10 +441,11 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
 
             return revisionLocation;
         } finally {
-            final boolean deleted = zipFile.delete();
+            final boolean deleted = tarzipFile.delete();
             if (!deleted) {
-                logger.println("Failed to clean up file " + zipFile.getPath());
+                logger.println("Failed to clean up file " + tarzipFile.getPath());
             }
+            tarzipFile.delete();
         }
     }
 
