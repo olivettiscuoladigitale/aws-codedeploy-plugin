@@ -48,22 +48,6 @@
     <f:entry title="Appspec.yml per Deployment Group" field="deploymentGroupAppspec">
         <f:checkbox field="deploymentGroupAppspec" checked="${instance.getDeploymentGroupAppspec}"/>
     </f:entry>
-    <f:entry title="AWS CodeDeploy Deployment Group" field="deploymentGroupName">
-        <f:textbox/>
-    </f:entry>
-    <f:entry title="AWS CodeDeploy Deployment Config" field="deploymentConfig">
-        <f:textbox/>
-    </f:entry>
-
-    <f:entry title="AWS Region" field="region">
-        <f:select/>
-    </f:entry>
-    <f:entry title="S3 Bucket" field="s3bucket">
-        <f:textbox/>
-    </f:entry>
-    <f:entry title="S3 Prefix" field="s3prefix">
-        <f:textbox default=""/>
-    </f:entry>
 
     <f:radioBlock title="Pack artifacts" name="packArtifacts" value="compressToS3" checked="${instance.getPackArtifacts() == 'compressToS3'}" inline="true">
         <f:description>
