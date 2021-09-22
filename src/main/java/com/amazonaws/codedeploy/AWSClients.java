@@ -28,14 +28,18 @@ import com.amazonaws.ClientConfiguration;
 import com.amazonaws.auth.AWSCredentials;
 import com.amazonaws.auth.BasicAWSCredentials;
 import com.amazonaws.auth.BasicSessionCredentials;
-import com.amazonaws.regions.Region;
-import com.amazonaws.regions.Regions;
-import com.amazonaws.services.codedeploy.AmazonCodeDeployClient;
+import com.amazonaws.auth.AWSStaticCredentialsProvider;
+import com.amazonaws.client.builder.AwsClientBuilder.EndpointConfiguration;
+import com.amazonaws.services.codedeploy.AmazonCodeDeploy;
+import com.amazonaws.services.codedeploy.AmazonCodeDeployClientBuilder;
 import com.amazonaws.services.codedeploy.model.GetApplicationRequest;
-import com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
+import com.amazonaws.services.identitymanagement.AmazonIdentityManagement;
+import com.amazonaws.services.identitymanagement.AmazonIdentityManagementClientBuilder;
 import com.amazonaws.services.identitymanagement.model.GetUserResult;
-import com.amazonaws.services.s3.AmazonS3Client;
-import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceClient;
+import com.amazonaws.services.s3.AmazonS3;
+import com.amazonaws.services.s3.AmazonS3ClientBuilder;
+import com.amazonaws.services.securitytoken.AWSSecurityTokenService;
+import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceClientBuilder;
 import com.amazonaws.services.securitytoken.model.AssumeRoleRequest;
 import com.amazonaws.services.securitytoken.model.AssumeRoleResult;
 import com.amazonaws.services.securitytoken.model.Credentials;
@@ -54,10 +58,10 @@ public class AWSClients {
      * AWS-CodeDeploy-Jenkins-Plugin/<Version>
      * This will be used as the SDK user agent suffix
      **/
-    private static final String USER_AGENT_SUFFIX = "AWS-CodeDeploy-Jenkins-Plugin/1.20";
+    private static final String USER_AGENT_SUFFIX = "AWS-CodeDeploy-Jenkins-Plugin/1.23";
 
-    public final AmazonCodeDeployClient codedeploy;
-    public final AmazonS3Client s3;
+    public final AmazonCodeDeploy codedeploy;
+    public final AmazonS3 s3;
 
     private final String region;
     private final String proxyHost;
@@ -77,10 +81,27 @@ public class AWSClients {
         
         clientCfg.setUserAgentSuffix(USER_AGENT_SUFFIX);
 
-        this.s3 = credentials != null ? new AmazonS3Client(credentials, clientCfg) : new AmazonS3Client(clientCfg);
-        this.codedeploy = credentials != null ? new AmazonCodeDeployClient(credentials, clientCfg) : new AmazonCodeDeployClient(clientCfg);
-        codedeploy.setRegion(Region.getRegion(Regions.fromName(this.region)));
-        s3.setRegion(Region.getRegion(Regions.fromName(this.region)));
+        if (credentials != null) {
+            this.codedeploy = AmazonCodeDeployClientBuilder.standard()
+                .withRegion(this.region)
+                .withClientConfiguration(clientCfg)
+                .withCredentials(new AWSStaticCredentialsProvider(credentials))
+                .build();
+            this.s3 = AmazonS3ClientBuilder.standard()
+                .withRegion(this.region)
+                .withClientConfiguration(clientCfg)
+                .withCredentials(new AWSStaticCredentialsProvider(credentials))
+                .build();
+        } else {
+            this.codedeploy = AmazonCodeDeployClientBuilder.standard()
+                .withRegion(this.region)
+                .withClientConfiguration(clientCfg)
+                .build();
+            this.s3 = AmazonS3ClientBuilder.standard()
+                .withRegion(this.region)
+                .withClientConfiguration(clientCfg)
+                .build();
+        }
     }
     
     public static AWSClients fromDefaultCredentialChain(String region, String proxyHost, int proxyPort) {
@@ -88,7 +109,7 @@ public class AWSClients {
     }
     
     public static AWSClients fromIAMRole(String region, String iamRole, String externalId, String proxyHost, int proxyPort) {
-        return new AWSClients(region, getCredentials(iamRole, externalId), proxyHost, proxyPort);
+        return new AWSClients(region, getCredentials(iamRole, externalId, region), proxyHost, proxyPort);
     }
     
     public static AWSClients fromBasicCredentials(String region, String awsAccessKey, String awsSecretKey, String proxyHost, int proxyPort) {
@@ -111,7 +132,9 @@ public class AWSClients {
                 clientCfg.setProxyHost(proxyHost);
                 clientCfg.setProxyPort(proxyPort);
             }
-            AmazonIdentityManagementClient iam = new AmazonIdentityManagementClient(clientCfg);
+            final AmazonIdentityManagement iam = AmazonIdentityManagementClientBuilder.standard()
+                .withClientConfiguration(clientCfg)
+                .build();
             GetUserResult user = iam.getUser();
             arn = user.getUser().getArn();
         } catch (AmazonServiceException e) {
@@ -149,10 +172,15 @@ public class AWSClients {
         return file;
     }
 
-    private static AWSCredentials getCredentials(String iamRole, String externalId) {
-        if (isEmpty(iamRole)) return null;
-
-        AWSSecurityTokenServiceClient sts = new AWSSecurityTokenServiceClient();
+    private static AWSCredentials getCredentials(final String iamRole, final String externalId, final String region) {
+        if (isEmpty(iamRole)) {
+            return null;
+        }
+        final String stsEndpointUrl = String.format("https://sts.%s.amazonaws.com", region);
+        final EndpointConfiguration regionEndpointConfig = new EndpointConfiguration(stsEndpointUrl, region);
+        final AWSSecurityTokenService stsRegionalClient = AWSSecurityTokenServiceClientBuilder.standard()
+            .withEndpointConfiguration(regionEndpointConfig)
+            .build();
 
         int credsDuration = (int) (AWSCodeDeployPublisher.DEFAULT_TIMEOUT_SECONDS
                         * AWSCodeDeployPublisher.DEFAULT_POLLING_FREQUENCY_SECONDS);
@@ -161,7 +189,7 @@ public class AWSClients {
             credsDuration = 3600;
         }
 
-        AssumeRoleResult assumeRoleResult = sts.assumeRole(new AssumeRoleRequest()
+        final AssumeRoleResult assumeRoleResult = stsRegionalClient.assumeRole(new AssumeRoleRequest()
                         .withRoleArn(iamRole)
                         .withExternalId(externalId)
                         .withDurationSeconds(credsDuration)

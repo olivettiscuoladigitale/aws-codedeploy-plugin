@@ -80,6 +80,7 @@ import javax.servlet.ServletException;
  * credentials to be configured for each project.
  */
 public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep {
+
     public static final long DEFAULT_TIMEOUT_SECONDS = 900;
     public static final long DEFAULT_POLLING_FREQUENCY_SECONDS = 15;
     public static final String ROLE_SESSION_NAME = "jenkins-codedeploy-plugin";
@@ -92,6 +93,7 @@ public class AWSCodeDeployPublisher extends Publisher implements SimpleBuildStep
     private final String deploymentConfig;
     private final Long pollingTimeoutSec;
     private final Long pollingFreqSec;
+
     private final boolean deploymentGroupAppspec;
     private final boolean waitForCompletion;
     private final String externalId;
