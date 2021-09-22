@@ -8,7 +8,7 @@
   </parent>
 
   <artifactId>codedeploy</artifactId>
-  <version>1.24-SNAPSHOT</version>
+  <version>1.24-SNAPSHOT.2</version>
   <packaging>hpi</packaging>
   <groupId>com.amazonaws</groupId>
   <name>AWS CodeDeploy Plugin for Jenkins</name>
@@ -54,7 +54,7 @@
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <jenkins.version>1.612</jenkins.version>
+    <jenkins.version>2.204.1</jenkins.version>
     <java.level>8</java.level>
   </properties>
 

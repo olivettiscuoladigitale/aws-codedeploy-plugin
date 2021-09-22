@@ -16,9 +16,10 @@ Build from source
 To compile the plugin from source run Maven task:
 
 ```bash
-docker run -it --rm -v `pwd`:/data maven:3.8-jdk-8-slim bash
+docker run -it --rm -v `pwd`:/data maven:3-openjdk-8 bash
 cd /data
-mvn clean hpi:hpi -Dmaven.javadoc.skip=true -Denforcer.fail=false
+mvn package -Dmaven.javadoc.skip=true -Denforcer.fail=false
+mvn hpi:hpi -Dmaven.javadoc.skip=true -Denforcer.fail=false
 ```
 
 Setting up
