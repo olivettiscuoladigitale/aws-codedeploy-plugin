@@ -10,6 +10,17 @@ finish, making the final success contingent on the success of the deployment.
 
 [![Build Status](https://ci.jenkins.io/buildStatus/icon?job=Plugins/aws-codedeploy-plugin/master)](https://ci.jenkins.io/job/Plugins/job/aws-codedeploy-plugin/job/master/)
 
+Build from source
+----------
+
+To compile the plugin from source run Maven task:
+
+```bash
+docker run -it --rm -v `pwd`:/data maven:3.8-jdk-11-slim bash
+cd /data
+mvn clean hpi:run -Dmaven.javadoc.skip=true -Denforcer.fail=false
+```
+
 Setting up
 ----------
 
